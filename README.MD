@@ -7,6 +7,7 @@
 This code is not organized, safe, idiomatic, efficient, or bug-free. However, it serves as a nice experimentation bed for 3D rendering with wgpu-rs. At the time of writing this, the feature set of this program is as follows:
 
 - Render 100*100 cuboid columns in a grid, with the pillars' respective heights being a function of simplex noise. This process vaguely resembles voxel based procedural terrain generation algorithms.
+- Enable basic movement around the scene; currently movement is mapped to the arrow keys or `FRST` (_not_ `WASD`!). Sorry QWERTY users.
 - The amplitude of the simplex noise can be increased by pressing `J`.
 - The sampling frequency of the simplex noise can be increased by pressing `L`.
 

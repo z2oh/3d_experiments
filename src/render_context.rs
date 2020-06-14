@@ -429,6 +429,15 @@ impl RenderContext {
         self.frequency = frequency
     }
 
+    #[allow(dead_code)]
+    pub fn camera(&self) -> &camera::Camera {
+        &self.camera
+    }
+    pub fn camera_mut(&mut self) -> &mut camera::Camera {
+        self.set_uniform_dirty();
+        &mut self.camera
+    }
+
     // Utility functions that mutate local state.
     fn regenerate_mesh(&mut self) {
         let (vertex_data, index_data) = utils::create_vertices(self.amplitude, self.frequency);
