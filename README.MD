@@ -1,4 +1,4 @@
-# 3d_experiments
+# jvox
 
 <center>
     <img src="render.png">

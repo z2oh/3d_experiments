@@ -1,5 +1,5 @@
 [package]
-name = "rendering_experiments"
+name = "jvox"
 version = "0.0.1"
 authors = ["Jeremy Day <jadaytime@gmail.com>"]
 edition = "2018"
