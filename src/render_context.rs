@@ -414,6 +414,4 @@ impl RenderContext {
         self.next_frame_encoder.copy_buffer_to_buffer(&temp_v_buf, 0, &self.vertex_buf, 0, (vertex_data.len() * 24) as u64);
         self.next_frame_encoder.copy_buffer_to_buffer(&temp_i_buf, 0, &self.index_buf, 0, index_data.len() as u64);
     }
-
 }
-
