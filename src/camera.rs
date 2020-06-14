@@ -68,6 +68,7 @@ impl Camera {
     /// Invalidate the cache. The next time we get the matrix, it will be recomputed.
     fn invalidate_cache(&mut self) {
         self.cached_matrix = None;
+        self.cached_right = None;
     }
 
     pub fn set_aspect_ratio(&mut self, aspect_ratio: f32) {
@@ -97,4 +98,16 @@ impl Camera {
         self.eye -= r * mag;
     }
 
+    pub fn rotate_by(&mut self, delta: cgmath::Vector2<f32>, sensitivity: f32) {
+        use cgmath::Rotation;
+        self.invalidate_cache();
+        let x_theta = delta.x;
+        let y_theta = delta.y;
+        let quat = cgmath::Quaternion::from(cgmath::Euler {
+            x: cgmath::Deg(0.0),
+            y: cgmath::Deg(y_theta / sensitivity),
+            z: cgmath::Deg(x_theta / sensitivity),
+        });
+        self.dir = quat.rotate_vector(self.dir);
+    }
 }

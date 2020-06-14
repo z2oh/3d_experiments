@@ -17,6 +17,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     env_logger::init();
     // Initialize the render context.
     let mut render_context = RenderContext::create(&window).await.unwrap();
+    let mut input_context = input::InputContext::new();
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -36,7 +37,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             Event::WindowEvent { event: WindowEvent::KeyboardInput { input: event::KeyboardInput {
                 virtual_keycode: Some(keycode),
                 state: event::ElementState::Pressed, ..
-            }, .. }, .. } => input::handle_key(&mut render_context, keycode),
+            }, .. }, .. } => input_context.handle_key(&mut render_context, keycode),
+
+            Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } =>
+                input_context.handle_cursor_moved(&mut render_context, position),
             _ => {}
         }
     });

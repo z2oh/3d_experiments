@@ -790,6 +790,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jvox"
+version = "0.0.1"
+dependencies = [
+ "bytemuck",
+ "cgmath",
+ "env_logger",
+ "futures",
+ "image 0.23.5",
+ "noise",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "kernel32-sys"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1528,20 +1542,6 @@ name = "regex-syntax"
 version = "0.6.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "26412eb97c6b088a6997e05f69403a802a92d520de2f8e63c2b65f9e0f47c4e8"
-
-[[package]]
-name = "rendering_experiments"
-version = "0.0.1"
-dependencies = [
- "bytemuck",
- "cgmath",
- "env_logger",
- "futures",
- "image 0.23.5",
- "noise",
- "wgpu",
- "winit",
-]
 
 [[package]]
 name = "rusttype"
