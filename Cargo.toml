@@ -1,5 +1,5 @@
 [package]
-name = "3d_experiments"
+name = "rendering_experiments"
 version = "0.0.1"
 authors = ["Jeremy Day <jadaytime@gmail.com>"]
 edition = "2018"
