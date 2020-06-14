@@ -1,5 +1,6 @@
 use winit::window::Window;
 
+use crate::camera;
 use crate::utils;
 
 /// A `RenderContext` stores any state that is required for rendering a frame. This may include:
@@ -40,7 +41,7 @@ pub struct RenderContext {
 
     sampler: wgpu::Sampler,
 
-    mx_total: cgmath::Matrix4<f32>,
+    camera: camera::Camera,
 
     uniform_buf: wgpu::Buffer,
 
@@ -50,7 +51,8 @@ pub struct RenderContext {
     pipeline_layout: wgpu::PipelineLayout,
     render_pipeline: wgpu::RenderPipeline,
 
-    dirty: bool,
+    mesh_dirty: bool,
+    uniform_dirty: bool,
 }
 
 impl RenderContext {
@@ -187,13 +189,25 @@ impl RenderContext {
             compare: wgpu::CompareFunction::Undefined,
         });
 
-        // Create the camera.
-        let mx_total = utils::generate_matrix(sc_desc.width as f32 / sc_desc.height as f32);
-        let mx_ref: &[f32; 16] = mx_total.as_ref();
+        // Create the camera and initialize it with sane defaults.
+        let aspect_ratio = sc_desc.width as f32 / sc_desc.height as f32;
+        // This needs to be mutable because the camera has a matrix cache.
+        // TODO: Can this be fixed? RefCell? Do we need an Arc? :(
+        let mut camera = camera::Camera::new(
+            45.0,
+            aspect_ratio,
+            1.0,
+            1000.0,
+            // Start out at a nice vantage point looking toward the origin.
+            cgmath::Point3::new(300.0, 300.0, 50.0),
+            cgmath::Vector3::new(-0.702247, -0.702247, -0.117041)
+        );
+        let camera_matrix = camera.matrix();
+        let camera_matrix_ref: &[f32; 16] = camera_matrix.as_ref();
 
         // Create the GPU buffer where we will store our shader uniforms.
         let uniform_buf = device.create_buffer_with_data(
-            bytemuck::cast_slice(mx_ref),
+            bytemuck::cast_slice(camera_matrix_ref),
             wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         );
 
@@ -230,7 +244,7 @@ impl RenderContext {
                     binding: 0,
                     resource: wgpu::BindingResource::Buffer {
                         buffer: &uniform_buf,
-                        range: 0..mx_ref.len() as u64,
+                        range: 0..camera_matrix_ref.len() as u64,
                     },
                 },
                 wgpu::Binding {
@@ -325,36 +339,42 @@ impl RenderContext {
             texture,
             texture_view,
             sampler,
-            mx_total,
+            camera,
             uniform_buf,
             bind_group_layout,
             bind_group,
             pipeline_layout,
             render_pipeline,
-            dirty: false,
+            mesh_dirty: false,
+            uniform_dirty: false,
         })
     }
 
     pub fn resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
+        // Update our swap chain description with the new width and height and then create the new swap chain.
         self.sc_desc.width = size.width;
         self.sc_desc.height = size.height;
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
 
-        self.mx_total = utils::generate_matrix(self.sc_desc.width as f32 / self.sc_desc.height as f32);
-        let mx_ref: &[f32; 16] = self.mx_total.as_ref();
-
-        let temp_buf =
-            self.device.create_buffer_with_data(bytemuck::cast_slice(mx_ref), wgpu::BufferUsage::COPY_SRC);
-
-        self.next_frame_encoder.copy_buffer_to_buffer(&temp_buf, 0, &self.uniform_buf, 0, 64);
+        // Our aspect ratio might have changed, so we update our camera.
+        self.camera.set_aspect_ratio(self.sc_desc.width as f32 / self.sc_desc.height as f32);
     }
 
     pub fn render(&mut self) {
         let frame = self.swap_chain.get_next_texture().expect("Timeout when acquiring next swap chain texture.");
 
-        if self.dirty {
+        if self.mesh_dirty {
             self.regenerate_mesh();
-            self.dirty = false;
+            self.mesh_dirty = false;
+        }
+
+        if self.uniform_dirty {
+            let camera_matrix = self.camera.matrix();
+            let camera_matrix_ref: &[f32; 16] = camera_matrix.as_ref();
+            let temp_buf =
+                self.device.create_buffer_with_data(bytemuck::cast_slice(camera_matrix_ref), wgpu::BufferUsage::COPY_SRC);
+            self.next_frame_encoder.copy_buffer_to_buffer(&temp_buf, 0, &self.uniform_buf, 0, 64);
+            self.uniform_dirty = false;
         }
 
         // Go ahead and pull out the command encoder we have been using to build up this frame. We set up the next
@@ -390,8 +410,11 @@ impl RenderContext {
     }
 
     // Expose raw mutation for some of the basic state variables.
-    pub fn set_dirty(&mut self) {
-        self.dirty = true;
+    pub fn set_mesh_dirty(&mut self) {
+        self.mesh_dirty = true;
+    }
+    pub fn set_uniform_dirty(&mut self) {
+        self.uniform_dirty = true;
     }
     pub fn amplitude(&self) -> f64 {
         self.amplitude

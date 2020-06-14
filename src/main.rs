@@ -5,6 +5,7 @@ use winit::{
     window::Window
 };
 
+mod camera;
 mod input;
 mod render_context;
 mod simplex;
