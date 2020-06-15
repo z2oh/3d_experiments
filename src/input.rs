@@ -1,18 +1,15 @@
-use winit::dpi::PhysicalPosition;
 use winit::event::VirtualKeyCode;
 
 use crate::render_context;
 
 pub struct InputContext {
     sensitivity: f32,
-    last_cursor_pos: Option<cgmath::Point2<f32>>,
 }
 
 impl InputContext {
     pub fn new() -> Self {
         Self {
             sensitivity: 10.0,
-            last_cursor_pos: None,
         }
     }
 
@@ -46,24 +43,9 @@ impl InputContext {
     pub fn handle_cursor_moved(
         &mut self,
         render_context: &mut render_context::RenderContext,
-        position: PhysicalPosition<f64>,
+        (delta_x, delta_y): (f64, f64),
     ) {
-        if let Some(pos) = self.last_cursor_pos {
-            let current = cgmath::Point2::new(position.x as f32, position.y as f32);
-            let cursor_delta = pos - current;
-            render_context.camera_mut().rotate_by(cursor_delta, self.sensitivity);
-            self.last_cursor_pos = Some(current);
-        } else {
-            let position = cgmath::Point2::new(position.x as f32, position.y as f32);
-            self.last_cursor_pos = Some(position);
-        }
-    }
-
-    pub fn handle_cursor_entered(&mut self) {
-        self.last_cursor_pos = None;
-    }
-
-    pub fn handle_cursor_left(&mut self) {
-        self.last_cursor_pos = None;
+        let delta = cgmath::Vector2::new(-delta_x as f32, -delta_y as f32);
+        render_context.camera_mut().rotate_by(delta, self.sensitivity);
     }
 }

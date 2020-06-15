@@ -1,6 +1,6 @@
 use winit::{
     event,
-    event::{Event, WindowEvent},
+    event::{Event, DeviceEvent, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::Window
 };
@@ -19,6 +19,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut render_context = RenderContext::create(&window).await.unwrap();
     let mut input_context = input::InputContext::new();
 
+    // Start focused by default, assuming the application was executed with the intention of using it straight away.
+    let mut window_focused: bool = true;
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
@@ -27,11 +30,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
             Event::WindowEvent { event: WindowEvent::Resized(size), .. } => render_context.resize(size),
             // Handle requests to close the window...
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *control_flow = ControlFlow::Exit,
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } |
             Event::WindowEvent { event: WindowEvent::KeyboardInput { input: event::KeyboardInput {
                 virtual_keycode: Some(event::VirtualKeyCode::Escape),
                 state: event::ElementState::Pressed, ..
-            }, .. }, .. } => *control_flow = ControlFlow::Exit,
+            }, .. }, .. } => {
+                *control_flow = ControlFlow::Exit;
+                window.set_cursor_grab(false).unwrap();
+                window.set_cursor_visible(true);
+            },
 
             // Other keypresses go to the input handler.
             Event::WindowEvent { event: WindowEvent::KeyboardInput { input: event::KeyboardInput {
@@ -39,8 +46,25 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 state: event::ElementState::Pressed, ..
             }, .. }, .. } => input_context.handle_key(&mut render_context, keycode),
 
-            Event::WindowEvent { event: WindowEvent::CursorMoved { position, .. }, .. } =>
-                input_context.handle_cursor_moved(&mut render_context, position),
+            // We track if the window has focus so that we can ignore device events when focus is lost.
+            Event::WindowEvent { event: WindowEvent::Focused(b), .. } => window_focused = b,
+
+            Event::WindowEvent { event: WindowEvent::CursorEntered { .. }, .. } => {
+                window.set_cursor_grab(true).unwrap();
+                window.set_cursor_visible(false);
+            },
+            Event::WindowEvent { event: WindowEvent::CursorLeft { .. }, .. } => {
+                window.set_cursor_grab(false).unwrap();
+                window.set_cursor_visible(true);
+            },
+
+            // Ignore all device events if the window does not have focus.
+            Event::DeviceEvent { .. } if !window_focused => {}
+
+            // Handle mouse motion.
+            Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta, .. }, .. } => {
+                input_context.handle_cursor_moved(&mut render_context, delta);
+            }
             _ => {}
         }
     });
