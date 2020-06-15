@@ -60,31 +60,36 @@ impl RenderContext {
     pub async fn create(window: &Window) -> Option<RenderContext> {
         let size = window.inner_size();
 
+        // Create the wgpu instance.
+        let instance = wgpu::Instance::new();
+
         // Create the wgpu surface.
-        let surface = wgpu::Surface::create(window);
+        let surface = unsafe { instance.create_surface(window) };
 
         // Create the wgpu adapter.
-        let adapter = wgpu::Adapter::request(
-            &wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::Default,
-                compatible_surface: Some(&surface),
-            },
-            wgpu::BackendBit::PRIMARY,
-        )
-        .await
-        .unwrap();
+        let adapter = instance
+            .request_adapter(
+                &wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface),
+                },
+                wgpu::UnsafeExtensions::disallow(),
+                wgpu::BackendBit::PRIMARY,
+            )
+            .await
+            .unwrap();
 
         // Create the device handle and the command queue handle for that device.
         let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-            extensions: wgpu::Extensions {
-                anisotropic_filtering: false,
-            },
+            extensions: wgpu::Extensions::empty(),
             limits: wgpu::Limits::default(),
-        })
-        .await;
+            shader_validation: true,
+        }, None)
+        .await
+        .unwrap();
 
-        // We use the encoder to build commands for the command queue.
-        let mut encoder =
+        // Create the command encoder used during initialization.
+        let init_encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
         // Create our initial mesh.
@@ -145,7 +150,6 @@ impl RenderContext {
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             size: texture_extent,
-            array_layer_count: 1,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -156,37 +160,31 @@ impl RenderContext {
         let texture_view = texture.create_default_view();
         // Place the texture data into a temporary copy buffer, and then immediately request a copy of it into a texture
         // buffer on the GPU. We wrap this in a lexical scope to avoid reusing `temp_buf`.
-        {
-            let temp_buf =
-                device.create_buffer_with_data(texels.as_slice(), wgpu::BufferUsage::COPY_SRC);
-            encoder.copy_buffer_to_texture(
-                wgpu::BufferCopyView {
-                    buffer: &temp_buf,
-                    offset: 0,
-                    bytes_per_row: 4 * size,
-                    rows_per_image: 0,
-                },
-                wgpu::TextureCopyView {
-                    texture: &texture,
-                    mip_level: 0,
-                    array_layer: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                },
-                texture_extent,
-            );
-        }
+        queue.write_texture(
+            wgpu::TextureCopyView {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            &texels,
+            wgpu::TextureDataLayout {
+                offset: 0,
+                bytes_per_row: 4 * size,
+                rows_per_image: 0,
+            },
+            texture_extent,
+        );
 
         // Create the sampler.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: None,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Nearest,
-            lod_min_clamp: -100.0,
-            lod_max_clamp: 100.0,
-            compare: wgpu::CompareFunction::Undefined,
+            ..Default::default()
         });
 
         // Create the camera and initialize it with sane defaults.
@@ -219,6 +217,7 @@ impl RenderContext {
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::UniformBuffer { dynamic: false },
+                    ..Default::default()
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
@@ -228,11 +227,13 @@ impl RenderContext {
                         component_type: wgpu::TextureComponentType::Float,
                         dimension: wgpu::TextureViewDimension::D2,
                     },
+                    ..Default::default()
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Sampler { comparison: false },
+                    ..Default::default()
                 },
             ],
         });
@@ -242,14 +243,14 @@ impl RenderContext {
             bindings: &[
                 wgpu::Binding {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer {
-                        buffer: &uniform_buf,
-                        range: 0..camera_matrix_ref.len() as u64,
-                    },
+                    resource: wgpu::BindingResource::Buffer(uniform_buf.slice(..)),
                 },
                 wgpu::Binding {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                    resource: wgpu::BindingResource::TextureView {
+                        view: &texture_view,
+                        read_only_depth_stencil: false,
+                    },
                 },
                 wgpu::Binding {
                     binding: 2,
@@ -315,7 +316,7 @@ impl RenderContext {
         });
 
         // Flush the initialization commands on the command queue.
-        queue.submit(&[encoder.finish()]);
+        queue.submit(Some(init_encoder.finish()));
 
         let next_frame_encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -361,7 +362,10 @@ impl RenderContext {
     }
 
     pub fn render(&mut self) {
-        let frame = self.swap_chain.get_next_texture().expect("Timeout when acquiring next swap chain texture.");
+        let frame = match self.swap_chain.get_next_frame() {
+            Ok(frame) => frame,
+            Err(_) => panic!("Failed to acquire next swap chain texture!"),
+        };
 
         if self.mesh_dirty {
             self.regenerate_mesh();
@@ -386,7 +390,7 @@ impl RenderContext {
         {
             let mut render_pass = next_frame_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
-                    attachment: &frame.view,
+                    attachment: &frame.output.view,
                     resolve_target: None,
                     load_op: wgpu::LoadOp::Clear,
                     store_op: wgpu::StoreOp::Store,
@@ -401,12 +405,12 @@ impl RenderContext {
             });
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.bind_group, &[]);
-            render_pass.set_index_buffer(&self.index_buf, 0, 0);
-            render_pass.set_vertex_buffer(0, &self.vertex_buf, 0, 0);
+            render_pass.set_index_buffer(self.index_buf.slice(..));
+            render_pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
             render_pass.draw_indexed(0..self.index_buf_len as u32, 0, 0..1);
         }
 
-        self.queue.submit(&[next_frame_encoder.finish()]);
+        self.queue.submit(Some(next_frame_encoder.finish()));
     }
 
     // Expose raw mutation for some of the basic state variables.
