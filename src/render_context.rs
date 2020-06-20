@@ -192,13 +192,14 @@ impl RenderContext {
         // This needs to be mutable because the camera has a matrix cache.
         // TODO: Can this be fixed? RefCell? Do we need an Arc? :(
         let mut camera = camera::Camera::new(
-            45.0,
+            // Start out at a nice vantage point looking toward the origin.
+            cgmath::Point3::new(200.0, 200.0, 50.0),
+            cgmath::Vector3::new(-1.0, -1.0, -0.5),
+            cgmath::Vector3::new(0.0, 0.0, 1.0),
             aspect_ratio,
+            80.0,
             1.0,
             1000.0,
-            // Start out at a nice vantage point looking toward the origin.
-            cgmath::Point3::new(300.0, 300.0, 50.0),
-            cgmath::Vector3::new(-0.702247, -0.702247, -0.117041)
         );
         let camera_matrix = camera.matrix();
         let camera_matrix_ref: &[f32; 16] = camera_matrix.as_ref();

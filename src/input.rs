@@ -3,13 +3,15 @@ use winit::event::VirtualKeyCode;
 use crate::render_context;
 
 pub struct InputContext {
-    sensitivity: f32,
+    x_sensitivity: f32,
+    y_sensitivity: f32,
 }
 
 impl InputContext {
     pub fn new() -> Self {
         Self {
-            sensitivity: 10.0,
+            x_sensitivity: 500.0,
+            y_sensitivity: 500.0,
         }
     }
 
@@ -46,6 +48,6 @@ impl InputContext {
         (delta_x, delta_y): (f64, f64),
     ) {
         let delta = cgmath::Vector2::new(-delta_x as f32, -delta_y as f32);
-        render_context.camera_mut().rotate_by(delta, self.sensitivity);
+        render_context.camera_mut().rotate_by_x_y(delta, self.x_sensitivity, self.y_sensitivity);
     }
 }
