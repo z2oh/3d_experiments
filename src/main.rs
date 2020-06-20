@@ -21,12 +21,21 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     // Start focused by default, assuming the application was executed with the intention of using it straight away.
     let mut window_focused: bool = true;
+    let six_ms = std::time::Duration::from_millis(6);
+    // Move our starting time back by the time between frame requests so that we request the first frame right away.
+    let mut prev_frame = std::time::Instant::now() - six_ms;
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         match event {
             Event::MainEventsCleared => window.request_redraw(),
-            Event::RedrawRequested(_) => render_context.render(),
+            Event::RedrawRequested(_) => {
+                let now = std::time::Instant::now();
+                if now - prev_frame > six_ms {
+                    render_context.render();
+                    prev_frame = now;
+                }
+            },
 
             Event::WindowEvent { event: WindowEvent::Resized(size), .. } => render_context.resize(size),
             // Handle requests to close the window...
