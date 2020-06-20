@@ -134,18 +134,15 @@ impl Camera {
 
         // Left and right rotation, so rotate around the z-axis, *not* the up axis.
         let rot_axis_x = cgmath::Vector3::new(0.0, 0.0, 1.0);
-        let x_delta = cgmath::Rad(delta.x / x_sensitivity);
-        // We rotate by x_delta / 2.0. We divide because quaternions operate on half angles.
-        let x_theta = x_delta / 2.0;
-        let x_theta_s = x_theta.sin();
-        let x_quat = cgmath::Quaternion::from_sv(x_theta.cos(), x_theta_s * rot_axis_x).normalize();
+        let x_theta = cgmath::Rad(delta.x / x_sensitivity);
+        let x_quat = cgmath::Quaternion::from_axis_angle(rot_axis_x, x_theta);
 
         // Up and down rotation, so rotate around the cross product of up and the view direction.
         let rot_axis_y = self.view.cross(rot_axis_x).normalize();
-        let y_delta = cgmath::Rad(delta.y / y_sensitivity);
         let y_theta = {
+            let y_theta = cgmath::Rad(delta.y / y_sensitivity);
             // Normalize pitch to [-pi/2, pi/2].
-            let new_pitch = self.pitch + y_delta;
+            let new_pitch = self.pitch + y_theta;
             // If our new pitch would have exceeded the pitch range ([-pi/2, pi/2]), then we just
             // don't pitch the camera any more. This could cause some strange behavior for
             // pathological events (like if the mouse sensitivity is extremely high), but for now
@@ -156,12 +153,10 @@ impl Camera {
                 cgmath::Rad(0.0)
             } else {
                 self.pitch = new_pitch;
-               // We rotate by y_delta / 2.0. We divide because quaternions operate on half angles.
-                y_delta / 2.0
+                y_theta
             }
         };
-        let y_theta_s = y_theta.sin();
-        let y_quat = cgmath::Quaternion::from_sv(y_theta.cos(), y_theta_s * rot_axis_y).normalize();
+        let y_quat = cgmath::Quaternion::from_axis_angle(rot_axis_y, y_theta);
 
         self.view = y_quat.rotate_vector(self.view).normalize();
         self.view = x_quat.rotate_vector(self.view).normalize();
