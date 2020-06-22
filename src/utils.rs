@@ -165,3 +165,14 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     0.0, 0.0, 0.5, 0.0,
     0.0, 0.0, 0.5, 1.0,
 );
+
+#[macro_export]
+macro_rules! benchmark {
+    ($label:expr, $body:expr) => {{
+        let before = ::std::time::Instant::now();
+        let res = $body;
+        let after = ::std::time::Instant::now();
+        log::info!("[TIME] {:?} took {:?}", $label, after - before);
+        res
+    }}
+}

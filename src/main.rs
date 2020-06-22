@@ -33,9 +33,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 let now = std::time::Instant::now();
                 if now - prev_frame > six_ms {
                     render_context.set_mesh_dirty();
-                    render_context.render();
                     prev_frame = now;
                 }
+                render_context.render();
             },
 
             Event::WindowEvent { event: WindowEvent::Resized(size), .. } => render_context.resize(size),

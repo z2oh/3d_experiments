@@ -517,7 +517,8 @@ impl RenderContext {
 
     // Utility functions that mutate local state.
     fn regenerate_mesh(&mut self) {
-        let (vertex_data, index_data) = utils::create_vertices(self.frequency);
+        use crate::benchmark;
+        let (vertex_data, index_data) = benchmark!("Regenerating mesh", utils::create_vertices(self.frequency));
         let temp_v_buf = self.device.create_buffer_with_data(bytemuck::cast_slice(&vertex_data), wgpu::BufferUsage::COPY_SRC);
         let temp_i_buf = self.device.create_buffer_with_data(bytemuck::cast_slice(&index_data), wgpu::BufferUsage::COPY_SRC);
         self.next_frame_encoder.copy_buffer_to_buffer(&temp_v_buf, 0, &self.vertex_buf, 0, (vertex_data.len() * utils::VERTEX_SIZE) as u64);
