@@ -110,6 +110,18 @@ impl Camera {
         self.position -= self.view * mag;
     }
 
+    pub fn move_up(&mut self, mag: f32) {
+        self.invalidate_cache();
+
+        self.position += self.up * mag;
+    }
+
+    pub fn move_down(&mut self, mag: f32) {
+        self.invalidate_cache();
+
+        self.position -= self.up * mag;
+    }
+
     pub fn move_right(&mut self, mag: f32) {
         self.invalidate_cache();
 

@@ -1,10 +1,13 @@
-use crate::simplex;
+use cgmath::prelude::*;
+
+//use crate::simplex;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Vertex {
-    _pos: [f32; 4],
-    _tex_coord: [f32; 2],
+    pos: [f32; 4],
+    normal: [f32; 3],
+    tc: [f32; 2],
 }
 
 pub const VERTEX_SIZE: usize = std::mem::size_of::<Vertex>();
@@ -14,74 +17,140 @@ use bytemuck::{Pod, Zeroable};
 unsafe impl Pod for Vertex {}
 unsafe impl Zeroable for Vertex {}
 
-pub fn vertex(pos: [f32; 3], tc: [f32; 2]) -> Vertex {
+pub fn vertex(pos: [f32; 3], normal: [f32; 3], tc: [f32; 2]) -> Vertex {
     Vertex {
-        _pos: [pos[0], pos[1], pos[2], 1.0],
-        _tex_coord: [tc[0], tc[1]],
+        pos: [pos[0], pos[1], pos[2], 1.0],
+        normal,
+        tc,
     }
 }
 
-pub fn create_cuboid(offset_x: f32, offset_y: f32, offset_z: f32, width: f32, length: f32, height: f32, index_offset: u32) -> ([Vertex; 24], [u32; 36]) {
-    ([
-        // top (0, 0,
-        vertex([-1.0*width+offset_x, -1.0*length+offset_y, 1.0*height+offset_z], [0.0, 0.0]),
-        vertex([1.0*width+offset_x, -1.0*length+offset_y, 1.0*height+offset_z], [1.0, 0.0]),
-        vertex([1.0*width+offset_x, 1.0*length+offset_y, 1.0*height+offset_z], [1.0, 1.0]),
-        vertex([-1.0*width+offset_x, 1.0*length+offset_y, 1.0*height+offset_z], [0.0, 1.0]),
-        // bottom (0.0, 0.0, -1)
-        vertex([-1.0*width+offset_x, 1.0*length+offset_y, -1.0*height+offset_z], [1.0, 0.0]),
-        vertex([1.0*width+offset_x, 1.0*length+offset_y, -1.0*height+offset_z], [0.0, 0.0]),
-        vertex([1.0*width+offset_x, -1.0*length+offset_y, -1.0*height+offset_z], [0.0, 1.0]),
-        vertex([-1.0*width+offset_x, -1.0*length+offset_y, -1.0*height+offset_z], [1.0, 1.0]),
-        // right (1.0, 0.0, 0)
-        vertex([1.0*width+offset_x, -1.0*length+offset_y, -1.0*height+offset_z], [0.0, 0.0]),
-        vertex([1.0*width+offset_x, 1.0*length+offset_y, -1.0*height+offset_z], [1.0, 0.0]),
-        vertex([1.0*width+offset_x, 1.0*length+offset_y, 1.0*height+offset_z], [1.0, 1.0]),
-        vertex([1.0*width+offset_x, -1.0*length+offset_y, 1.0*height+offset_z], [0.0, 1.0]),
-        // left (-1.0, 0.0, 0)
-        vertex([-1.0*width+offset_x, -1.0*length+offset_y, 1.0*height+offset_z], [1.0, 0.0]),
-        vertex([-1.0*width+offset_x, 1.0*length+offset_y, 1.0*height+offset_z], [0.0, 0.0]),
-        vertex([-1.0*width+offset_x, 1.0*length+offset_y, -1.0*height+offset_z], [0.0, 1.0]),
-        vertex([-1.0*width+offset_x, -1.0*length+offset_y, -1.0*height+offset_z], [1.0, 1.0]),
-        // front (0.0, 1.0, 0)
-        vertex([1.0*width+offset_x, 1.0*length+offset_y, -1.0*height+offset_z], [1.0, 0.0]),
-        vertex([-1.0*width+offset_x, 1.0*length+offset_y, -1.0*height+offset_z], [0.0, 0.0]),
-        vertex([-1.0*width+offset_x, 1.0*length+offset_y, 1.0*height+offset_z], [0.0, 1.0]),
-        vertex([1.0*width+offset_x, 1.0*length+offset_y, 1.0*height+offset_z], [1.0, 1.0]),
-        // back (0.0, -1.0, 0)
-        vertex([1.0*width+offset_x, -1.0*length+offset_y, 1.0*height+offset_z], [0.0, 0.0]),
-        vertex([-1.0*width+offset_x, -1.0*length+offset_y, 1.0*height+offset_z], [1.0, 0.0]),
-        vertex([-1.0*width+offset_x, -1.0*length+offset_y, -1.0*height+offset_z], [1.0, 1.0]),
-        vertex([1.0*width+offset_x, -1.0*length+offset_y, -1.0*height+offset_z], [0.0, 1.0]),
-    ],
-    [
-        0+index_offset, 1+index_offset, 2+index_offset, 2+index_offset, 3+index_offset, 0+index_offset, // top
-        4+index_offset, 5+index_offset, 6+index_offset, 6+index_offset, 7+index_offset, 4+index_offset, // bottom
-        8+index_offset, 9+index_offset, 10+index_offset, 10+index_offset, 11+index_offset, 8+index_offset, // right
-        12+index_offset, 13+index_offset, 14+index_offset, 14+index_offset, 15+index_offset, 12+index_offset, // left
-        16+index_offset, 17+index_offset, 18+index_offset, 18+index_offset, 19+index_offset, 16+index_offset, // front
-        20+index_offset, 21+index_offset, 22+index_offset, 22+index_offset, 23+index_offset, 20+index_offset, // back
-    ])
+struct MeshAccumulator {
+    vertex_accum: Vec<Vertex>,
+    index_accum: Vec<u32>,
+    index_offset: u32,
 }
 
-pub fn create_vertices(amplitude: f64, frequency: f32) -> (Vec<Vertex>, Vec<u32>) {
-    let prng_base = simplex::Simplex::with_seed(0);
-    let mut index_offset = 0;
-    let mut vertex_accum: Vec<Vertex> = Vec::with_capacity(100 * 100 * 24);
-    let mut index_accum: Vec<u32> = Vec::with_capacity(100 * 100 * 36);
-    for y in 0..100 {
-        for x in 0..100 {
-            let x = (x as f32) * 2.0;
-            let y = (y as f32) * 2.0;
-            let z = (prng_base.get2d((x / frequency) as f64, (y / frequency) as f64) * amplitude as f64) as f32;
-            let (vertices_next, indices_next) = create_cuboid(x, y, z, 1.0, 1.0, 8.0, index_offset);
-            index_offset += 24;
-            vertex_accum.extend(vertices_next.iter());
-            index_accum.extend(indices_next.iter());
+#[allow(dead_code)]
+impl MeshAccumulator {
+    fn new() -> Self {
+        Self {
+            vertex_accum: Vec::new(),
+            index_accum: Vec::new(),
+            index_offset: 0,
         }
     }
 
-    (vertex_accum, index_accum)
+    fn with_capacities(vertex_capacity: usize, index_capacity: usize) -> Self {
+        Self {
+            vertex_accum: Vec::with_capacity(vertex_capacity),
+            index_accum: Vec::with_capacity(index_capacity),
+            index_offset: 0,
+        }
+    }
+
+    fn report(self) -> (Vec<Vertex>, Vec<u32>) {
+        (self.vertex_accum, self.index_accum)
+    }
+
+    fn add_cuboid_quat(
+        &mut self,
+        center: cgmath::Point3<f32>,
+        orientation: cgmath::Quaternion<f32>,
+        width_2: f32,
+        length_2: f32,
+        height_2: f32,
+    ) {
+        use cgmath::prelude::*;
+        use cgmath::{Rad, Vector3, Quaternion};
+        let top_center = center + orientation.rotate_vector(Vector3::new(0., 0., height_2));
+        let bottom_center = center - orientation.rotate_vector(Vector3::new(0., 0., height_2));
+        let right_center = center + orientation.rotate_vector(Vector3::new(width_2, 0., 0.));
+        let left_center = center - orientation.rotate_vector(Vector3::new(width_2, 0., 0.));
+        let front_center = center + orientation.rotate_vector(Vector3::new(0., length_2, 0.));
+        let back_center = center - orientation.rotate_vector(Vector3::new(0., length_2, 0.));
+
+        let top = orientation;
+        let front = orientation * Quaternion::from_angle_x(-Rad::turn_div_4());
+        let back = orientation * Quaternion::from_angle_x(Rad::turn_div_4());
+        let left = orientation * Quaternion::from_angle_y(-Rad::turn_div_4());
+        let right = orientation * Quaternion::from_angle_y(Rad::turn_div_4());
+        let bottom = orientation * Quaternion::from_angle_x(Rad::turn_div_2());
+
+        self.add_quad_quat(top_center, top, width_2, length_2);
+        self.add_quad_quat(bottom_center, bottom, width_2, length_2);
+
+        self.add_quad_quat(left_center, left, height_2, length_2);
+        self.add_quad_quat(right_center, right, height_2, length_2);
+        self.add_quad_quat(front_center, front, width_2, height_2);
+        self.add_quad_quat(back_center, back, width_2, height_2);
+    }
+
+    /// Create a quad mesh from a provided position vector and a quaternion describing the quad's
+    /// orientation. A counter clockwise winding orientation is used.
+    ///
+    /// Up is assumed to be the z-axis.
+    pub fn add_quad_quat(
+        &mut self,
+        center: cgmath::Point3<f32>,
+        orientation: cgmath::Quaternion<f32>,
+        width_2: f32,
+        length_2: f32,
+    ) {
+        let i = self.index_offset;
+
+        let pos = center.to_vec();
+        let _1 = cgmath::Vector3::new(-width_2, -length_2, 0.0);
+        let _2 = cgmath::Vector3::new(width_2, -length_2, 0.0);
+        let _3 = cgmath::Vector3::new(width_2, length_2, 0.0);
+        let _4 = cgmath::Vector3::new(-width_2, length_2, 0.0);
+
+        let _1 = pos + orientation.rotate_vector(_1);
+        let _2 = pos + orientation.rotate_vector(_2);
+        let _3 = pos + orientation.rotate_vector(_3);
+        let _4 = pos + orientation.rotate_vector(_4);
+
+        let _1_n: [f32; 3] = orientation.rotate_vector(cgmath::Vector3::unit_z()).normalize().into();
+
+        self.vertex_accum.extend(&[
+            vertex([_1.x, _1.y, _1.z], _1_n, [0.0, 0.0]),
+            vertex([_2.x, _2.y, _2.z], _1_n, [1.0, 0.0]),
+            vertex([_3.x, _3.y, _3.z], _1_n, [1.0, 1.0]),
+            vertex([_4.x, _4.y, _4.z], _1_n, [0.0, 1.0]),
+        ]);
+        self.index_accum.extend(&[0+i, 1+i, 2+i, 2+i, 3+i, 0+i]);
+        self.index_offset += 4;
+    }
+}
+
+pub fn create_vertices(prev_f: f32) -> (Vec<Vertex>, Vec<u32>) {
+    // TODO: Simplex noise will make a return...
+    //let prng_base = simplex::Simplex::with_seed(0);
+    let mut mesh_accumulator = MeshAccumulator::new();
+
+    let base = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad(0.0)).normalize();
+
+    let origin = cgmath::Point3::origin();
+    for y in 0..64 {
+        for x in 0..64 {
+            let y = y - 32;
+            let x = x - 32;
+            // Calculate the polar coordinates.
+            let _theta = f32::atan2(y as f32, x as f32);
+            let r = ((x*x + y*y) as f32).sqrt();
+
+            // If we are too far away, throw away the cuboid.
+            if r > 32.0 {
+                continue;
+            }
+
+            let z = (r + prev_f).sin();
+
+            let pos = cgmath::Vector3::new(x as f32, y as f32, z);
+            mesh_accumulator.add_cuboid_quat(origin + (pos), base, 0.5, 0.5, 0.5);
+        }
+    }
+    mesh_accumulator.report()
 }
 
 pub fn create_texels(_size: u32) -> Vec<u8> {

@@ -26,16 +26,22 @@ impl InputContext {
                 render_context.set_mesh_dirty();
             },
             VirtualKeyCode::F | VirtualKeyCode::Up => {
-                render_context.camera_mut().move_forward(1.0);
+                render_context.camera_mut().move_forward(0.5);
             },
             VirtualKeyCode::S | VirtualKeyCode::Down => {
-                render_context.camera_mut().move_backward(1.0);
+                render_context.camera_mut().move_backward(0.5);
             },
             VirtualKeyCode::R | VirtualKeyCode::Left => {
-                render_context.camera_mut().move_left(1.0);
+                render_context.camera_mut().move_left(0.5);
             },
             VirtualKeyCode::T | VirtualKeyCode::Right => {
-                render_context.camera_mut().move_right(1.0);
+                render_context.camera_mut().move_right(0.5);
+            },
+            VirtualKeyCode::W => {
+                render_context.camera_mut().move_up(0.5);
+            },
+            VirtualKeyCode::P => {
+                render_context.camera_mut().move_down(0.5);
             },
             // Ignore other keys.
             _ => {},

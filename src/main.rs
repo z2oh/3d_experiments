@@ -32,6 +32,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             Event::RedrawRequested(_) => {
                 let now = std::time::Instant::now();
                 if now - prev_frame > six_ms {
+                    render_context.set_mesh_dirty();
                     render_context.render();
                     prev_frame = now;
                 }

@@ -3,6 +3,9 @@ use winit::window::Window;
 use crate::camera;
 use crate::utils;
 
+#[cfg(debug_assertions)]
+mod debug_pass;
+
 /// A `RenderContext` stores any state that is required for rendering a frame. This may include:
 ///
 /// - camera position
@@ -38,8 +41,11 @@ pub struct RenderContext {
 
     texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
+    texture_sampler: wgpu::Sampler,
 
-    sampler: wgpu::Sampler,
+    depth_buffer: wgpu::Texture,
+    depth_buffer_view: wgpu::TextureView,
+    depth_buffer_sampler: wgpu::Sampler,
 
     camera: camera::Camera,
 
@@ -98,7 +104,7 @@ impl RenderContext {
         let frequency = 6.0f32;
 
         // Build the mesh; these are heap allocated `Vec`s.
-        let (vertex_data, index_data) = utils::create_vertices(amplitude, frequency);
+        let (vertex_data, index_data) = utils::create_vertices(frequency);
 
         // Now we write the vertex data to a GPU buffer.
         let vertex_slice: &[u8] = bytemuck::cast_slice(&vertex_data);
@@ -115,15 +121,15 @@ impl RenderContext {
             // We will be reusing this buffer to update the terrain, so it needs to be a `COPY_DST`.
             wgpu::BufferUsage::INDEX | wgpu::BufferUsage::COPY_DST,
         );
-        // We are using u32s for the indicies, so divide the byte count by 4.
+        // We are using u32s for the indices, so divide the byte count by 4.
         let index_buf_len = index_slice.len() / 4;
 
         // Load the vertex and fragment shaders.
-        let vs = include_bytes!("../shaders/shader.vert.spv");
+        let vs = include_bytes!("../../shaders/shader.vert.spv");
         let vs_module =
             device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&vs[..])).unwrap());
 
-        let fs = include_bytes!("../shaders/shader.frag.spv");
+        let fs = include_bytes!("../../shaders/shader.frag.spv");
         let fs_module =
             device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&fs[..])).unwrap());
 
@@ -175,8 +181,39 @@ impl RenderContext {
             texture_extent,
         );
 
-        // Create the sampler.
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        // Create our depth buffer.
+        let depth_buffer_size = wgpu::Extent3d {
+            width: sc_desc.width,
+            height: sc_desc.height,
+            depth: 1,
+        };
+        let depth_buffer = device.create_texture(&wgpu::TextureDescriptor {
+            size: depth_buffer_size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT | wgpu::TextureUsage::SAMPLED | wgpu::TextureUsage::COPY_SRC,
+            label: None,
+        });
+        let depth_buffer_view = depth_buffer.create_default_view();
+
+        // Create the samplers.
+        let depth_buffer_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: None,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            lod_min_clamp: -100.0,
+            lod_max_clamp: 100.0,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+
+        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -193,8 +230,8 @@ impl RenderContext {
         // TODO: Can this be fixed? RefCell? Do we need an Arc? :(
         let mut camera = camera::Camera::new(
             // Start out at a nice vantage point looking toward the origin.
-            cgmath::Point3::new(200.0, 200.0, 50.0),
-            cgmath::Vector3::new(-1.0, -1.0, -0.5),
+            cgmath::Point3::new(32.0, 32.0, 32.0),
+            cgmath::Vector3::new(-1.0, -1.0, -1.0),
             cgmath::Vector3::new(0.0, 0.0, 1.0),
             aspect_ratio,
             80.0,
@@ -255,7 +292,7 @@ impl RenderContext {
                 },
                 wgpu::Binding {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
+                    resource: wgpu::BindingResource::Sampler(&texture_sampler),
                 },
             ],
             label: None,
@@ -278,7 +315,7 @@ impl RenderContext {
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::Back,
+                cull_mode: wgpu::CullMode::None,
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
@@ -286,26 +323,47 @@ impl RenderContext {
             primitive_topology: wgpu::PrimitiveTopology::TriangleList,
             color_states: &[wgpu::ColorStateDescriptor {
                 format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                color_blend: wgpu::BlendDescriptor::REPLACE,
-                alpha_blend: wgpu::BlendDescriptor::REPLACE,
+                color_blend: wgpu::BlendDescriptor {
+                    src_factor: wgpu::BlendFactor::SrcAlpha,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha_blend: wgpu::BlendDescriptor {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
                 write_mask: wgpu::ColorWrite::ALL,
             }],
-            depth_stencil_state: None,
+            depth_stencil_state: Some(wgpu::DepthStencilStateDescriptor {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil_front: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_back: wgpu::StencilStateFaceDescriptor::IGNORE,
+                stencil_read_mask: 0,
+                stencil_write_mask: 0,
+            }),
             vertex_state: wgpu::VertexStateDescriptor {
                 index_format: wgpu::IndexFormat::Uint32,
                 vertex_buffers: &[wgpu::VertexBufferDescriptor {
                     stride: utils::VERTEX_SIZE as wgpu::BufferAddress,
                     step_mode: wgpu::InputStepMode::Vertex,
                     attributes: &[
-                    wgpu::VertexAttributeDescriptor {
-                        format: wgpu::VertexFormat::Float4,
+                        wgpu::VertexAttributeDescriptor {
+                            format: wgpu::VertexFormat::Float4,
                             offset: 0,
                             shader_location: 0,
                         },
                         wgpu::VertexAttributeDescriptor {
-                            format: wgpu::VertexFormat::Float2,
+                            format: wgpu::VertexFormat::Float4,
                             offset: 4 * 4,
                             shader_location: 1,
+                        },
+                        wgpu::VertexAttributeDescriptor {
+                            format: wgpu::VertexFormat::Float2,
+                            offset: 4 * 4 + 4 * 3,
+                            shader_location: 2,
                         },
                     ],
                 }],
@@ -340,7 +398,10 @@ impl RenderContext {
             swap_chain,
             texture,
             texture_view,
-            sampler,
+            texture_sampler,
+            depth_buffer,
+            depth_buffer_view,
+            depth_buffer_sampler,
             camera,
             uniform_buf,
             bind_group_layout,
@@ -396,13 +457,23 @@ impl RenderContext {
                     load_op: wgpu::LoadOp::Clear,
                     store_op: wgpu::StoreOp::Store,
                     clear_color: wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
                         a: 1.0,
                     },
                 }],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
+                    attachment: &self.depth_buffer_view,
+                    depth_load_op: wgpu::LoadOp::Clear,
+                    depth_store_op: wgpu::StoreOp::Store,
+                    depth_read_only: false,
+                    clear_depth: 1.0,
+                    stencil_load_op: wgpu::LoadOp::Clear,
+                    stencil_store_op: wgpu::StoreOp::Store,
+                    stencil_read_only: false,
+                    clear_stencil: 0,
+                }),
             });
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.bind_group, &[]);
@@ -416,6 +487,7 @@ impl RenderContext {
 
     // Expose raw mutation for some of the basic state variables.
     pub fn set_mesh_dirty(&mut self) {
+        self.frequency += 0.05;
         self.mesh_dirty = true;
     }
     pub fn set_uniform_dirty(&mut self) {
@@ -445,10 +517,10 @@ impl RenderContext {
 
     // Utility functions that mutate local state.
     fn regenerate_mesh(&mut self) {
-        let (vertex_data, index_data) = utils::create_vertices(self.amplitude, self.frequency);
+        let (vertex_data, index_data) = utils::create_vertices(self.frequency);
         let temp_v_buf = self.device.create_buffer_with_data(bytemuck::cast_slice(&vertex_data), wgpu::BufferUsage::COPY_SRC);
         let temp_i_buf = self.device.create_buffer_with_data(bytemuck::cast_slice(&index_data), wgpu::BufferUsage::COPY_SRC);
-        self.next_frame_encoder.copy_buffer_to_buffer(&temp_v_buf, 0, &self.vertex_buf, 0, (vertex_data.len() * 24) as u64);
+        self.next_frame_encoder.copy_buffer_to_buffer(&temp_v_buf, 0, &self.vertex_buf, 0, (vertex_data.len() * utils::VERTEX_SIZE) as u64);
         self.next_frame_encoder.copy_buffer_to_buffer(&temp_i_buf, 0, &self.index_buf, 0, index_data.len() as u64);
     }
 }
