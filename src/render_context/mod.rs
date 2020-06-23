@@ -1,6 +1,5 @@
 use winit::window::Window;
 
-use crate::benchmark;
 use crate::camera;
 use crate::utils;
 
@@ -403,7 +402,8 @@ impl RenderContext {
     }
 
     pub fn resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
-        // Update our swap chain description with the new width and height and then create the new swap chain.
+        // Update our swap chain description with the new width and height and then create the new
+        // swap chain.
         self.sc_desc.width = size.width;
         self.sc_desc.height = size.height;
         self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
@@ -412,7 +412,7 @@ impl RenderContext {
         self.camera.set_aspect_ratio(self.sc_desc.width as f32 / self.sc_desc.height as f32);
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self, new_data: Option<(Vec<crate::utils::Vertex>, Vec<u32>)>) {
         let frame = match self.swap_chain.get_next_frame() {
             Ok(frame) => frame,
             Err(_) => panic!("Failed to acquire next swap chain texture!"),
@@ -421,11 +421,17 @@ impl RenderContext {
         // If we need to regenerate the mesh, do so now, and write the data into the CPU side of
         // our managed buffers.
         if self.mesh_dirty {
+            /*
             let (vertex_data, index_data) =
                 benchmark!("Regenerating mesh", utils::create_vertices(self.frequency));
-            self.vertex_buf.replace_data(vertex_data);
-            self.index_buf.replace_data(index_data);
-            self.mesh_dirty = false;
+            */
+            if let Some((vertices, indices)) = new_data {
+                self.vertex_buf.replace_data(vertices);
+                self.index_buf.replace_data(indices);
+                // By only toggling this flag when we actually got new data, we make sure we check
+                // for new data every frame until we get it.
+                self.mesh_dirty = false;
+            }
         }
 
         // This looks weird, but picture the future: a loop over some collection of buffers,
@@ -440,14 +446,16 @@ impl RenderContext {
         if self.uniform_dirty {
             let camera_matrix = self.camera.matrix();
             let camera_matrix_ref: &[f32; 16] = camera_matrix.as_ref();
-            let temp_buf =
-                self.device.create_buffer_with_data(bytemuck::cast_slice(camera_matrix_ref), wgpu::BufferUsage::COPY_SRC);
+            let temp_buf = self.device.create_buffer_with_data(
+                bytemuck::cast_slice(camera_matrix_ref),
+                wgpu::BufferUsage::COPY_SRC,
+            );
             self.next_frame_encoder.copy_buffer_to_buffer(&temp_buf, 0, &self.uniform_buf, 0, 64);
             self.uniform_dirty = false;
         }
 
-        // Go ahead and pull out the command encoder we have been using to build up this frame. We set up the next
-        // frame's encoder at the same time.
+        // Go ahead and pull out the command encoder we have been using to build up this frame. We
+        // set up the next frame's encoder at the same time.
         let mut next_frame_encoder =
             self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         std::mem::swap(&mut self.next_frame_encoder, &mut next_frame_encoder);
