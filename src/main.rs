@@ -7,6 +7,7 @@ use winit::{
 
 mod camera;
 mod input;
+mod managed_buffer;
 mod render_context;
 mod simplex;
 mod utils;

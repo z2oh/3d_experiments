@@ -1,5 +1,6 @@
 use winit::window::Window;
 
+use crate::benchmark;
 use crate::camera;
 use crate::utils;
 
@@ -28,10 +29,8 @@ pub struct RenderContext {
     amplitude: f64,
     frequency: f32,
 
-    vertex_buf: wgpu::Buffer,
-    vertex_buf_len: usize,
-    index_buf: wgpu::Buffer,
-    index_buf_len: usize,
+    vertex_buf: crate::managed_buffer::ManagedBuffer<utils::Vertex>,
+    index_buf: crate::managed_buffer::ManagedBuffer<u32>,
 
     vs_module: wgpu::ShaderModule,
     fs_module: wgpu::ShaderModule,
@@ -106,23 +105,15 @@ impl RenderContext {
         // Build the mesh; these are heap allocated `Vec`s.
         let (vertex_data, index_data) = utils::create_vertices(frequency);
 
-        // Now we write the vertex data to a GPU buffer.
-        let vertex_slice: &[u8] = bytemuck::cast_slice(&vertex_data);
-        let vertex_buf = device.create_buffer_with_data(
-            vertex_slice,
-            // We will be reusing this buffer to update the terrain, so it needs to be a `COPY_DST`.
-            wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
-        );
-        let vertex_buf_len = vertex_data.len() * (utils::VERTEX_SIZE as usize);
-
-        let index_slice: &[u8] = bytemuck::cast_slice(&index_data);
-        let index_buf = device.create_buffer_with_data(
-            index_slice,
-            // We will be reusing this buffer to update the terrain, so it needs to be a `COPY_DST`.
-            wgpu::BufferUsage::INDEX | wgpu::BufferUsage::COPY_DST,
-        );
-        // We are using u32s for the indices, so divide the byte count by 4.
-        let index_buf_len = index_slice.len() / 4;
+        // Now we create the vertex buffer and index buffer on the GPU.
+        let vertex_buf = crate::managed_buffer::ManagedBuffer::new_vertex_buf_with_data(
+            &device,
+            vertex_data,
+        ).ok()?;
+        let index_buf = crate::managed_buffer::ManagedBuffer::new_index_buf_with_data(
+            &device,
+            index_data,
+        ).ok()?;
 
         // Load the vertex and fragment shaders.
         let vs = include_bytes!("../../shaders/shader.vert.spv");
@@ -389,9 +380,7 @@ impl RenderContext {
             amplitude,
             frequency,
             vertex_buf,
-            vertex_buf_len,
             index_buf,
-            index_buf_len,
             vs_module,
             fs_module,
             sc_desc,
@@ -429,9 +418,23 @@ impl RenderContext {
             Err(_) => panic!("Failed to acquire next swap chain texture!"),
         };
 
+        // If we need to regenerate the mesh, do so now, and write the data into the CPU side of
+        // our managed buffers.
         if self.mesh_dirty {
-            self.regenerate_mesh();
+            let (vertex_data, index_data) =
+                benchmark!("Regenerating mesh", utils::create_vertices(self.frequency));
+            self.vertex_buf.replace_data(vertex_data);
+            self.index_buf.replace_data(index_data);
             self.mesh_dirty = false;
+        }
+
+        // This looks weird, but picture the future: a loop over some collection of buffers,
+        // potentially flushing each one.
+        if self.vertex_buf.dirty() {
+            self.vertex_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
+        }
+        if self.index_buf.dirty() {
+            self.vertex_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
         }
 
         if self.uniform_dirty {
@@ -479,7 +482,7 @@ impl RenderContext {
             render_pass.set_bind_group(0, &self.bind_group, &[]);
             render_pass.set_index_buffer(self.index_buf.slice(..));
             render_pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
-            render_pass.draw_indexed(0..self.index_buf_len as u32, 0, 0..1);
+            render_pass.draw_indexed(0..self.index_buf.len() as u32, 0, 0..1);
         }
 
         self.queue.submit(Some(next_frame_encoder.finish()));
@@ -513,15 +516,5 @@ impl RenderContext {
     pub fn camera_mut(&mut self) -> &mut camera::Camera {
         self.set_uniform_dirty();
         &mut self.camera
-    }
-
-    // Utility functions that mutate local state.
-    fn regenerate_mesh(&mut self) {
-        use crate::benchmark;
-        let (vertex_data, index_data) = benchmark!("Regenerating mesh", utils::create_vertices(self.frequency));
-        let temp_v_buf = self.device.create_buffer_with_data(bytemuck::cast_slice(&vertex_data), wgpu::BufferUsage::COPY_SRC);
-        let temp_i_buf = self.device.create_buffer_with_data(bytemuck::cast_slice(&index_data), wgpu::BufferUsage::COPY_SRC);
-        self.next_frame_encoder.copy_buffer_to_buffer(&temp_v_buf, 0, &self.vertex_buf, 0, (vertex_data.len() * utils::VERTEX_SIZE) as u64);
-        self.next_frame_encoder.copy_buffer_to_buffer(&temp_i_buf, 0, &self.index_buf, 0, index_data.len() as u64);
     }
 }
