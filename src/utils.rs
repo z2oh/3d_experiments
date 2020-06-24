@@ -2,6 +2,28 @@ use cgmath::prelude::*;
 
 //use crate::simplex;
 
+/// A bit of a hacky type to allow a Matrix4 to be treated as an owned collection of f32s by the
+/// `ManagedBuffer` type. This is the common `newtype` pattern.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Matrix4(cgmath::Matrix4<f32>);
+
+unsafe impl Pod for Matrix4 {}
+unsafe impl Zeroable for Matrix4 {}
+
+impl From<cgmath::Matrix4<f32>> for Matrix4 {
+    fn from(matrix: cgmath::Matrix4<f32>) -> Self {
+        Matrix4(matrix)
+    }
+}
+
+impl AsRef<[f32]> for Matrix4 {
+    fn as_ref(&self) -> &[f32] {
+        let array_ref: &[f32; 16] = self.0.as_ref();
+        array_ref.as_ref()
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Vertex {

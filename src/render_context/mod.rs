@@ -28,8 +28,8 @@ pub struct RenderContext {
     amplitude: f64,
     frequency: f32,
 
-    vertex_buf: crate::managed_buffer::ManagedBuffer<utils::Vertex>,
-    index_buf: crate::managed_buffer::ManagedBuffer<u32>,
+    vertex_buf: crate::managed_buffer::ManagedBuffer<utils::Vertex, Vec<utils::Vertex>>,
+    index_buf: crate::managed_buffer::ManagedBuffer<u32, Vec<u32>>,
 
     vs_module: wgpu::ShaderModule,
     fs_module: wgpu::ShaderModule,
@@ -46,8 +46,8 @@ pub struct RenderContext {
     depth_buffer_sampler: wgpu::Sampler,
 
     camera: camera::Camera,
-
-    uniform_buf: wgpu::Buffer,
+    // For now, this only stores the camera's matrix.
+    uniform_buf: crate::managed_buffer::ManagedBuffer<f32, utils::Matrix4>,
 
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
@@ -56,7 +56,7 @@ pub struct RenderContext {
     render_pipeline: wgpu::RenderPipeline,
 
     mesh_dirty: bool,
-    uniform_dirty: bool,
+    camera_dirty: bool,
 }
 
 impl RenderContext {
@@ -228,14 +228,13 @@ impl RenderContext {
             1.0,
             1000.0,
         );
-        let camera_matrix = camera.matrix();
-        let camera_matrix_ref: &[f32; 16] = camera_matrix.as_ref();
+        let camera_matrix: crate::utils::Matrix4 = camera.matrix().into();
 
         // Create the GPU buffer where we will store our shader uniforms.
-        let uniform_buf = device.create_buffer_with_data(
-            bytemuck::cast_slice(camera_matrix_ref),
-            wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
-        );
+        let uniform_buf = crate::managed_buffer::ManagedBuffer::new_uniform_buf_with_data(
+            &device,
+            camera_matrix,
+        ).ok()?;
 
         // Set up our bind groups; this binds our data to named locations which are referenced in the shaders.
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -397,7 +396,7 @@ impl RenderContext {
             pipeline_layout,
             render_pipeline,
             mesh_dirty: false,
-            uniform_dirty: false,
+            camera_dirty: false,
         })
     }
 
@@ -421,10 +420,6 @@ impl RenderContext {
         // If we need to regenerate the mesh, do so now, and write the data into the CPU side of
         // our managed buffers.
         if self.mesh_dirty {
-            /*
-            let (vertex_data, index_data) =
-                benchmark!("Regenerating mesh", utils::create_vertices(self.frequency));
-            */
             if let Some((vertices, indices)) = new_data {
                 self.vertex_buf.replace_data(vertices);
                 self.index_buf.replace_data(indices);
@@ -432,6 +427,12 @@ impl RenderContext {
                 // for new data every frame until we get it.
                 self.mesh_dirty = false;
             }
+        }
+
+        // If the camera moved, we have to write the camera's data into the uniform buffer. We write
+        // the data into the CPU side of our managed uniform buffer here.
+        if self.camera_dirty {
+            self.uniform_buf.replace_data(self.camera.matrix().into());
         }
 
         // This looks weird, but picture the future: a loop over some collection of buffers,
@@ -442,16 +443,8 @@ impl RenderContext {
         if self.index_buf.dirty() {
             self.vertex_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
         }
-
-        if self.uniform_dirty {
-            let camera_matrix = self.camera.matrix();
-            let camera_matrix_ref: &[f32; 16] = camera_matrix.as_ref();
-            let temp_buf = self.device.create_buffer_with_data(
-                bytemuck::cast_slice(camera_matrix_ref),
-                wgpu::BufferUsage::COPY_SRC,
-            );
-            self.next_frame_encoder.copy_buffer_to_buffer(&temp_buf, 0, &self.uniform_buf, 0, 64);
-            self.uniform_dirty = false;
+        if self.uniform_buf.dirty() {
+            self.uniform_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
         }
 
         // Go ahead and pull out the command encoder we have been using to build up this frame. We
@@ -501,9 +494,10 @@ impl RenderContext {
         self.frequency += 0.05;
         self.mesh_dirty = true;
     }
-    pub fn set_uniform_dirty(&mut self) {
-        self.uniform_dirty = true;
+    fn set_camera_dirty(&mut self) {
+        self.camera_dirty = true;
     }
+
     pub fn amplitude(&self) -> f64 {
         self.amplitude
     }
@@ -522,7 +516,10 @@ impl RenderContext {
         &self.camera
     }
     pub fn camera_mut(&mut self) -> &mut camera::Camera {
-        self.set_uniform_dirty();
+        // This is aggressive; we set the camera to dirty any time someone takes a mutable reference
+        // to the camera; they do not have to mutate the camera. This is a negligible performance
+        // hit.
+        self.set_camera_dirty();
         &mut self.camera
     }
 }
