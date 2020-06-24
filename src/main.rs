@@ -11,6 +11,7 @@ use winit::{
 mod camera;
 mod input;
 mod managed_buffer;
+mod mesh;
 mod render_context;
 mod simplex;
 mod utils;
