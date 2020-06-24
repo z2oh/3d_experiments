@@ -34,8 +34,8 @@ impl<'cpu, T: bytemuck::Pod + bytemuck::Zeroable> ManagedBuffer<T> {
         }
     }
 
-    /// Create a new vertex buffer some specified input data. This object manages the data on both
-    /// the CPU and the GPU. This buffer is `COPY_DST`, so it can be written to. If the desired
+    /// Create a new vertex buffer with some provided input data. This object manages the data on
+    /// both the CPU and the GPU. This buffer is `COPY_DST`, so it can be written to. If the desired
     /// buffer is immutable, this is not the function to use.
     pub fn new_vertex_buf_with_data(
         device: &wgpu::Device,
@@ -52,8 +52,8 @@ impl<'cpu, T: bytemuck::Pod + bytemuck::Zeroable> ManagedBuffer<T> {
         })
     }
 
-    /// Create a new vertex buffer some specified input data. This object manages the data on both
-    /// the CPU and the GPU. This buffer is `COPY_DST`, so it can be written to. If the desired
+    /// Create a new index buffer with some provided input data. This object manages the data on
+    /// both the CPU and the GPU. This buffer is `COPY_DST`, so it can be written to. If the desired
     /// buffer is immutable, this is not the function to use.
     pub fn new_index_buf_with_data(
         device: &wgpu::Device,
