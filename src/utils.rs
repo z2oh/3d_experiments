@@ -24,6 +24,22 @@ impl AsRef<[f32]> for Matrix4 {
     }
 }
 
+/// A bit of a hacky type to allow a Matrix4 to be treated as an owned collection of f32s by the
+/// `ManagedBuffer` type. This is the common `newtype` pattern, with some additional padding since
+/// dynamic offsets must be 256-byte aligned. This is temporary.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PaddedMatrix4(cgmath::Matrix4<f32>, [u8; 192]);
+
+unsafe impl Pod for PaddedMatrix4 {}
+unsafe impl Zeroable for PaddedMatrix4 {}
+
+impl From<cgmath::Matrix4<f32>> for PaddedMatrix4 {
+    fn from(matrix: cgmath::Matrix4<f32>) -> Self {
+        PaddedMatrix4(matrix, [0; 192])
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Vertex {

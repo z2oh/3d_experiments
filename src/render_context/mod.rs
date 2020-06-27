@@ -48,6 +48,7 @@ pub struct RenderContext {
     camera: camera::Camera,
     // For now, this only stores the camera's matrix.
     uniform_buf: crate::managed_buffer::ManagedBuffer<f32, utils::Matrix4>,
+    transforms_buf: crate::managed_buffer::ManagedBuffer<utils::PaddedMatrix4, Vec<utils::PaddedMatrix4>>,
 
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
@@ -230,22 +231,41 @@ impl RenderContext {
         );
         let camera_matrix: crate::utils::Matrix4 = camera.matrix().into();
 
+        let mut object_transforms = Vec::new();
+        for y in 0..20 {
+            for x in 0..20 {
+                object_transforms.push(
+                    cgmath::Matrix4::from_translation(cgmath::Vector3::new(x as f32 * 64.0, y as f32 * 64.0, 0.0f32)).into()
+                );
+            }
+        }
+
         // Create the GPU buffer where we will store our shader uniforms.
         let uniform_buf = crate::managed_buffer::ManagedBuffer::new_uniform_buf_with_data(
             &device,
             camera_matrix,
         ).ok()?;
 
+        let transforms_buf = crate::managed_buffer::ManagedBuffer::new_uniform_buf_with_data(
+            &device,
+            object_transforms,
+        ).ok()?;
+
         // Set up our bind groups; this binds our data to named locations which are referenced in the shaders.
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             bindings: &[
+                // Our 0th bind group is for small global data shared between all invocations of the shader. Currently,
+                // this is the camera matrix. We set this bind group only once per frame
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStage::VERTEX,
                     ty: wgpu::BindingType::UniformBuffer { dynamic: false },
                     ..Default::default()
                 },
+                // Our 1st bind group is for texture data, which will be passed as an atlas. This may change a few times
+                // per frame if we need to render from multiple atlases. TODO: are texture atlases the right way to do
+                // this?
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStage::FRAGMENT,
@@ -256,10 +276,20 @@ impl RenderContext {
                     },
                     ..Default::default()
                 },
+                // Our 2nd bind group is the sampler for the above texture. This is likely to change only when the
+                // texture changes. TODO: is this true?
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStage::FRAGMENT,
                     ty: wgpu::BindingType::Sampler { comparison: false },
+                    ..Default::default()
+                },
+                // Our last bind group is a per object buffer, holding any data needed for an individual abstract object
+                // being rendered. This might be a transform matrix, for instance.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStage::VERTEX,
+                    ty: wgpu::BindingType::UniformBuffer { dynamic: true },
                     ..Default::default()
                 },
             ],
@@ -282,6 +312,10 @@ impl RenderContext {
                 wgpu::Binding {
                     binding: 2,
                     resource: wgpu::BindingResource::Sampler(&texture_sampler),
+                },
+                wgpu::Binding {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(transforms_buf.slice(..)),
                 },
             ],
             label: None,
@@ -391,6 +425,7 @@ impl RenderContext {
             depth_buffer_sampler,
             camera,
             uniform_buf,
+            transforms_buf,
             bind_group_layout,
             bind_group,
             pipeline_layout,
@@ -480,10 +515,12 @@ impl RenderContext {
                 }),
             });
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.bind_group, &[]);
             render_pass.set_index_buffer(self.index_buf.slice(..));
             render_pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
-            render_pass.draw_indexed(0..self.index_buf.len() as u32, 0, 0..1);
+            for i in 0..self.transforms_buf.len() as u32 {
+                render_pass.set_bind_group(0, &self.bind_group, &[i * self.transforms_buf.t_size() as u32]);
+                render_pass.draw_indexed(0..self.index_buf.len() as u32, 0, 0..1);
+            }
         }
 
         self.queue.submit(Some(next_frame_encoder.finish()));

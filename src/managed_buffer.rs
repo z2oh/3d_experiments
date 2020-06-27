@@ -27,7 +27,7 @@ pub struct ManagedBuffer<T, Own: AsRef<[T]>>
 
 impl<'cpu, Own: AsRef<[T]>, T: bytemuck::Pod + bytemuck::Zeroable> ManagedBuffer<T, Own> {
     #[inline(always)]
-    fn t_size(&self) -> usize {
+    pub fn t_size(&self) -> usize {
         std::mem::size_of::<T>()
     }
 
