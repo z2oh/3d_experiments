@@ -25,11 +25,7 @@ pub struct RenderContext {
     queue: wgpu::Queue,
     next_frame_encoder: wgpu::CommandEncoder,
 
-    amplitude: f64,
-    frequency: f32,
-
-    vertex_buf: crate::managed_buffer::ManagedBuffer<utils::Vertex, Vec<utils::Vertex>>,
-    index_buf: crate::managed_buffer::ManagedBuffer<u32, Vec<u32>>,
+    world_geometry_manager: crate::world_geometry::WorldGeometryManager,
 
     vs_module: wgpu::ShaderModule,
     fs_module: wgpu::ShaderModule,
@@ -48,7 +44,6 @@ pub struct RenderContext {
     camera: camera::Camera,
     // For now, this only stores the camera's matrix.
     uniform_buf: crate::managed_buffer::ManagedBuffer<f32, utils::Matrix4>,
-    transforms_buf: crate::managed_buffer::ManagedBuffer<utils::PaddedMatrix4, Vec<utils::PaddedMatrix4>>,
 
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
@@ -56,7 +51,6 @@ pub struct RenderContext {
     pipeline_layout: wgpu::PipelineLayout,
     render_pipeline: wgpu::RenderPipeline,
 
-    mesh_dirty: bool,
     camera_dirty: bool,
 }
 
@@ -97,23 +91,7 @@ impl RenderContext {
         let init_encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        // Create our initial mesh.
-        // These variables control the simplex noise generation of the voxel heightmap.
-        let amplitude = 10.0f64;
-        let frequency = 6.0f32;
-
-        // Build the mesh; these are heap allocated `Vec`s.
-        let (vertex_data, index_data) = utils::create_vertices(frequency);
-
-        // Now we create the vertex buffer and index buffer on the GPU.
-        let vertex_buf = crate::managed_buffer::ManagedBuffer::new_vertex_buf_with_data(
-            &device,
-            vertex_data,
-        ).ok()?;
-        let index_buf = crate::managed_buffer::ManagedBuffer::new_index_buf_with_data(
-            &device,
-            index_data,
-        ).ok()?;
+        let world_geometry_manager = crate::world_geometry::WorldGeometryManager::new(&device)?;
 
         // Load the vertex and fragment shaders.
         let vs = include_bytes!("../../shaders/shader.vert.spv");
@@ -138,8 +116,8 @@ impl RenderContext {
 
         // Create our texture and write it into a GPU buffer. Right now the texture is just a white image, but the
         // infrastructure is already in place to make better use of this data.
-        let size = 256u32;
-        let texels = utils::create_texels(size);
+        let size = 64u32;
+        let texels = utils::load_image_bytes("texture.png");
         let texture_extent = wgpu::Extent3d {
             width: size,
             height: size,
@@ -225,30 +203,16 @@ impl RenderContext {
             cgmath::Vector3::new(-1.0, -1.0, -1.0),
             cgmath::Vector3::new(0.0, 0.0, 1.0),
             aspect_ratio,
-            80.0,
-            1.0,
+            70.0,
+            0.5,
             1000.0,
         );
         let camera_matrix: crate::utils::Matrix4 = camera.matrix().into();
-
-        let mut object_transforms = Vec::new();
-        for y in 0..20 {
-            for x in 0..20 {
-                object_transforms.push(
-                    cgmath::Matrix4::from_translation(cgmath::Vector3::new(x as f32 * 64.0, y as f32 * 64.0, 0.0f32)).into()
-                );
-            }
-        }
 
         // Create the GPU buffer where we will store our shader uniforms.
         let uniform_buf = crate::managed_buffer::ManagedBuffer::new_uniform_buf_with_data(
             &device,
             camera_matrix,
-        ).ok()?;
-
-        let transforms_buf = crate::managed_buffer::ManagedBuffer::new_uniform_buf_with_data(
-            &device,
-            object_transforms,
         ).ok()?;
 
         // Set up our bind groups; this binds our data to named locations which are referenced in the shaders.
@@ -315,7 +279,7 @@ impl RenderContext {
                 },
                 wgpu::Binding {
                     binding: 3,
-                    resource: wgpu::BindingResource::Buffer(transforms_buf.slice(..)),
+                    resource: wgpu::BindingResource::Buffer(world_geometry_manager.transforms_buf.slice(..)),
                 },
             ],
             label: None,
@@ -338,7 +302,7 @@ impl RenderContext {
             }),
             rasterization_state: Some(wgpu::RasterizationStateDescriptor {
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: wgpu::CullMode::None,
+                cull_mode: wgpu::CullMode::Back,
                 depth_bias: 0,
                 depth_bias_slope_scale: 0.0,
                 depth_bias_clamp: 0.0,
@@ -368,25 +332,30 @@ impl RenderContext {
                 stencil_write_mask: 0,
             }),
             vertex_state: wgpu::VertexStateDescriptor {
-                index_format: wgpu::IndexFormat::Uint32,
+                index_format: wgpu::IndexFormat::Uint16,
                 vertex_buffers: &[wgpu::VertexBufferDescriptor {
-                    stride: utils::VERTEX_SIZE as wgpu::BufferAddress,
+                    stride: utils::IVERTEX_SIZE as wgpu::BufferAddress,
                     step_mode: wgpu::InputStepMode::Vertex,
                     attributes: &[
                         wgpu::VertexAttributeDescriptor {
-                            format: wgpu::VertexFormat::Float4,
+                            format: wgpu::VertexFormat::Int3,
                             offset: 0,
                             shader_location: 0,
                         },
                         wgpu::VertexAttributeDescriptor {
-                            format: wgpu::VertexFormat::Float4,
-                            offset: 4 * 4,
+                            format: wgpu::VertexFormat::Int3,
+                            offset: 4*3,
                             shader_location: 1,
                         },
                         wgpu::VertexAttributeDescriptor {
                             format: wgpu::VertexFormat::Float2,
-                            offset: 4 * 4 + 4 * 3,
+                            offset: 4*3 + 4*3,
                             shader_location: 2,
+                        },
+                        wgpu::VertexAttributeDescriptor {
+                            format: wgpu::VertexFormat::Uint,
+                            offset: 4*3 + 4*3 + 4*2,
+                            shader_location: 3,
                         },
                     ],
                 }],
@@ -409,10 +378,7 @@ impl RenderContext {
             device,
             queue,
             next_frame_encoder,
-            amplitude,
-            frequency,
-            vertex_buf,
-            index_buf,
+            world_geometry_manager,
             vs_module,
             fs_module,
             sc_desc,
@@ -425,12 +391,10 @@ impl RenderContext {
             depth_buffer_sampler,
             camera,
             uniform_buf,
-            transforms_buf,
             bind_group_layout,
             bind_group,
             pipeline_layout,
             render_pipeline,
-            mesh_dirty: false,
             camera_dirty: false,
         })
     }
@@ -446,23 +410,11 @@ impl RenderContext {
         self.camera.set_aspect_ratio(self.sc_desc.width as f32 / self.sc_desc.height as f32);
     }
 
-    pub fn render(&mut self, new_data: Option<(Vec<crate::utils::Vertex>, Vec<u32>)>) {
+    pub fn render(&mut self) {
         let frame = match self.swap_chain.get_next_frame() {
             Ok(frame) => frame,
             Err(_) => panic!("Failed to acquire next swap chain texture!"),
         };
-
-        // If we need to regenerate the mesh, do so now, and write the data into the CPU side of
-        // our managed buffers.
-        if self.mesh_dirty {
-            if let Some((vertices, indices)) = new_data {
-                self.vertex_buf.replace_data(vertices);
-                self.index_buf.replace_data(indices);
-                // By only toggling this flag when we actually got new data, we make sure we check
-                // for new data every frame until we get it.
-                self.mesh_dirty = false;
-            }
-        }
 
         // If the camera moved, we have to write the camera's data into the uniform buffer. We write
         // the data into the CPU side of our managed uniform buffer here.
@@ -472,11 +424,11 @@ impl RenderContext {
 
         // This looks weird, but picture the future: a loop over some collection of buffers,
         // potentially flushing each one.
-        if self.vertex_buf.dirty() {
-            self.vertex_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
+        if self.world_geometry_manager.vertex_buf.dirty() {
+            self.world_geometry_manager.vertex_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
         }
-        if self.index_buf.dirty() {
-            self.vertex_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
+        if self.world_geometry_manager.index_buf.dirty() {
+            self.world_geometry_manager.index_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
         }
         if self.uniform_buf.dirty() {
             self.uniform_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
@@ -496,9 +448,9 @@ impl RenderContext {
                     load_op: wgpu::LoadOp::Clear,
                     store_op: wgpu::StoreOp::Store,
                     clear_color: wgpu::Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
+                        r: 0.1,
+                        g: 0.2,
+                        b: 0.3,
                         a: 1.0,
                     },
                 }],
@@ -515,11 +467,16 @@ impl RenderContext {
                 }),
             });
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_index_buffer(self.index_buf.slice(..));
-            render_pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
-            for i in 0..self.transforms_buf.len() as u32 {
-                render_pass.set_bind_group(0, &self.bind_group, &[i * self.transforms_buf.t_size() as u32]);
-                render_pass.draw_indexed(0..self.index_buf.len() as u32, 0, 0..1);
+            render_pass.set_index_buffer(self.world_geometry_manager.index_buf.slice(..));
+            render_pass.set_vertex_buffer(0, self.world_geometry_manager.vertex_buf.slice(..));
+            for i in 0..self.world_geometry_manager.chunks.len() as u32 {
+                let chunk = &self.world_geometry_manager.chunks[i as usize];
+                render_pass.set_bind_group(
+                    0,
+                    &self.bind_group,
+                    &[(chunk.transform_index * self.world_geometry_manager.transforms_buf.t_size()) as u32],
+                );
+                render_pass.draw_indexed(chunk.index_offset as u32..(chunk.index_offset + chunk.index_count) as u32, chunk.vertex_offset as i32, 0..1);
             }
         }
 
@@ -527,25 +484,8 @@ impl RenderContext {
     }
 
     // Expose raw mutation for some of the basic state variables.
-    pub fn set_mesh_dirty(&mut self) {
-        self.frequency += 0.05;
-        self.mesh_dirty = true;
-    }
     fn set_camera_dirty(&mut self) {
         self.camera_dirty = true;
-    }
-
-    pub fn amplitude(&self) -> f64 {
-        self.amplitude
-    }
-    pub fn set_amplitude(&mut self, amplitude: f64) {
-        self.amplitude = amplitude
-    }
-    pub fn frequency(&self) -> f32 {
-        self.frequency
-    }
-    pub fn set_frequency(&mut self, frequency: f32) {
-        self.frequency = frequency
     }
 
     #[allow(dead_code)]

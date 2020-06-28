@@ -1,6 +1,4 @@
-use cgmath::prelude::*;
-
-//use crate::simplex;
+use bytemuck::{Pod, Zeroable};
 
 /// A bit of a hacky type to allow a Matrix4 to be treated as an owned collection of f32s by the
 /// `ManagedBuffer` type. This is the common `newtype` pattern.
@@ -60,45 +58,36 @@ impl Vertex {
 
 pub const VERTEX_SIZE: usize = std::mem::size_of::<Vertex>();
 
-use bytemuck::{Pod, Zeroable};
-
 unsafe impl Pod for Vertex {}
 unsafe impl Zeroable for Vertex {}
 
-
-pub fn create_vertices(prev_f: f32) -> (Vec<Vertex>, Vec<u32>) {
-    // TODO: Simplex noise will make a return...
-    //let prng_base = simplex::Simplex::with_seed(0);
-    let mut mesh_accumulator = crate::mesh::MeshAccumulator::new();
-
-    let base = cgmath::Quaternion::from_axis_angle(cgmath::Vector3::unit_x(), cgmath::Rad(0.0)).normalize();
-
-    let origin = cgmath::Point3::origin();
-    for y in 0..64 {
-        for x in 0..64 {
-            let y = y - 32;
-            let x = x - 32;
-            // Calculate the polar coordinates.
-            let _theta = f32::atan2(y as f32, x as f32);
-            let r = ((x*x + y*y) as f32).sqrt();
-
-            // If we are too far away, throw away the cuboid.
-            if r > 32.0 {
-                continue;
-            }
-
-            let z = (r + prev_f).sin();
-
-            let pos = cgmath::Vector3::new(x as f32, y as f32, z);
-            mesh_accumulator.add_cuboid_quat(origin + (pos), base, 0.5, 0.5, 0.5);
-        }
-    }
-    mesh_accumulator.report()
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct IVertex {
+    v_pos: [i32; 3],
+    b_pos: [i32; 3],
+    tc: [f32; 2],
+    data: [u8; 4],
 }
 
-pub fn create_texels(_size: u32) -> Vec<u8> {
-    // This only works because "white.png" happens to be exactly the right size, 256x256 in this case.
-    let image = image::open("white.png").unwrap();
+impl IVertex {
+    pub fn new(v_pos: cgmath::Vector3<i32>, b_pos: cgmath::Point3<i32>, tc: [f32; 2], face: u8) -> IVertex {
+        IVertex {
+            v_pos: v_pos.into(),
+            b_pos: b_pos.into(),
+            tc,
+            data: [face, 0, 0, 0],
+        }
+    }
+}
+
+pub const IVERTEX_SIZE: usize = std::mem::size_of::<IVertex>();
+
+unsafe impl Pod for IVertex {}
+unsafe impl Zeroable for IVertex {}
+
+pub fn load_image_bytes(path: &str) -> Vec<u8> {
+    let image = image::open(path).unwrap();
     image.to_rgba().into_raw()
 }
 

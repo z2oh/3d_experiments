@@ -112,6 +112,7 @@ impl<'cpu, Own: AsRef<[T]>, T: bytemuck::Pod + bytemuck::Zeroable> ManagedBuffer
 
     /// Returns the length of the host data. This is measured in number of `T`s, *not* number of
     /// bytes.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.host_data.as_ref().len()
     }

@@ -17,14 +17,6 @@ impl InputContext {
 
     pub fn handle_key(&self, render_context: &mut render_context::RenderContext, keycode: VirtualKeyCode) {
         match keycode {
-            VirtualKeyCode::J => {
-                render_context.set_amplitude(render_context.amplitude() * 1.1);
-                render_context.set_mesh_dirty();
-            },
-            VirtualKeyCode::L => {
-                render_context.set_frequency(render_context.frequency() * 1.1);
-                render_context.set_mesh_dirty();
-            },
             VirtualKeyCode::F | VirtualKeyCode::Up => {
                 render_context.camera_mut().move_forward(0.5);
             },
