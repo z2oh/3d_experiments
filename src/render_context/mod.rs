@@ -59,8 +59,11 @@ impl RenderContext {
     pub async fn create(window: &Window) -> Option<RenderContext> {
         let size = window.inner_size();
 
+        let unsafe_extensions = wgpu::UnsafeFeatures::disallow();
+        let required_features = wgpu::Features::empty();
+
         // Create the wgpu instance.
-        let instance = wgpu::Instance::new();
+        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
 
         // Create the wgpu surface.
         let surface = unsafe { instance.create_surface(window) };
@@ -72,15 +75,16 @@ impl RenderContext {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: Some(&surface),
                 },
-                wgpu::UnsafeExtensions::disallow(),
-                wgpu::BackendBit::PRIMARY,
+                unsafe_extensions,
             )
             .await
             .unwrap();
 
+        let adapter_features = adapter.features();
+
         // Create the device handle and the command queue handle for that device.
         let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-            extensions: wgpu::Extensions::empty(),
+            features: adapter_features & required_features,
             limits: wgpu::Limits::default(),
             shader_validation: true,
         }, None)
@@ -94,13 +98,8 @@ impl RenderContext {
         let world_geometry_manager = crate::world_geometry::WorldGeometryManager::new(&device)?;
 
         // Load the vertex and fragment shaders.
-        let vs = include_bytes!("../../shaders/shader.vert.spv");
-        let vs_module =
-            device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&vs[..])).unwrap());
-
-        let fs = include_bytes!("../../shaders/shader.frag.spv");
-        let fs_module =
-            device.create_shader_module(&wgpu::read_spirv(std::io::Cursor::new(&fs[..])).unwrap());
+        let vs_module = device.create_shader_module(wgpu::include_spirv!("../../shaders/shader.vert.spv"));
+        let fs_module = device.create_shader_module(wgpu::include_spirv!("../../shaders/shader.frag.spv"));
 
         // Create our swapchain. The swapchain is an abstraction over a buffered pixel array which corresponds directly
         // to the image which is rendered onto the display.
@@ -221,41 +220,43 @@ impl RenderContext {
             bindings: &[
                 // Our 0th bind group is for small global data shared between all invocations of the shader. Currently,
                 // this is the camera matrix. We set this bind group only once per frame
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: false },
-                    ..Default::default()
-                },
+                wgpu::BindGroupLayoutEntry::new(
+                    0,
+                    wgpu::ShaderStage::VERTEX,
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: false,
+                        min_binding_size: wgpu::BufferSize::new(64),
+                    },
+                ),
                 // Our 1st bind group is for texture data, which will be passed as an atlas. This may change a few times
                 // per frame if we need to render from multiple atlases. TODO: are texture atlases the right way to do
                 // this?
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::SampledTexture {
+                wgpu::BindGroupLayoutEntry::new(
+                    1,
+                    wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::SampledTexture {
                         multisampled: false,
                         component_type: wgpu::TextureComponentType::Float,
                         dimension: wgpu::TextureViewDimension::D2,
                     },
-                    ..Default::default()
-                },
+                ),
                 // Our 2nd bind group is the sampler for the above texture. This is likely to change only when the
                 // texture changes. TODO: is this true?
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStage::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler { comparison: false },
-                    ..Default::default()
-                },
+                wgpu::BindGroupLayoutEntry::new(
+                    2,
+                    wgpu::ShaderStage::FRAGMENT,
+                    wgpu::BindingType::Sampler { comparison: false },
+                ),
                 // Our last bind group is a per object buffer, holding any data needed for an individual abstract object
                 // being rendered. This might be a transform matrix, for instance.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStage::VERTEX,
-                    ty: wgpu::BindingType::UniformBuffer { dynamic: true },
-                    ..Default::default()
-                },
+                wgpu::BindGroupLayoutEntry::new(
+                    3,
+                    wgpu::ShaderStage::VERTEX,
+                    wgpu::BindingType::UniformBuffer {
+                        dynamic: true,
+                        min_binding_size: wgpu::BufferSize::new(256),
+                    },
+                ),
             ],
         });
 
@@ -268,10 +269,7 @@ impl RenderContext {
                 },
                 wgpu::Binding {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView {
-                        view: &texture_view,
-                        read_only_depth_stencil: false,
-                    },
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
                 },
                 wgpu::Binding {
                     binding: 2,
@@ -445,25 +443,26 @@ impl RenderContext {
                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                     attachment: &frame.output.view,
                     resolve_target: None,
-                    load_op: wgpu::LoadOp::Clear,
-                    store_op: wgpu::StoreOp::Store,
-                    clear_color: wgpu::Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
-                    },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.2,
+                            b: 0.3,
+                            a: 1.0,
+                        }),
+                        store: true,
+                    }
                 }],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachmentDescriptor {
                     attachment: &self.depth_buffer_view,
-                    depth_load_op: wgpu::LoadOp::Clear,
-                    depth_store_op: wgpu::StoreOp::Store,
-                    depth_read_only: false,
-                    clear_depth: 1.0,
-                    stencil_load_op: wgpu::LoadOp::Clear,
-                    stencil_store_op: wgpu::StoreOp::Store,
-                    stencil_read_only: false,
-                    clear_stencil: 0,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: true,
+                    }),
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: true,
+                    }),
                 }),
             });
             render_pass.set_pipeline(&self.render_pipeline);
