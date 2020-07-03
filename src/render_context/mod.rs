@@ -19,19 +19,14 @@ mod debug_pass;
 /// Eventually an additional layer should be introduced to abstract all interfacing with the GPU.
 #[allow(dead_code)]
 pub struct RenderContext {
-    surface: wgpu::Surface,
-    adapter: wgpu::Adapter,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    gpu_context: crate::gpu::GpuContext,
+
     next_frame_encoder: wgpu::CommandEncoder,
 
     world_geometry_manager: crate::world_geometry::WorldGeometryManager,
 
     vs_module: wgpu::ShaderModule,
     fs_module: wgpu::ShaderModule,
-
-    sc_desc: wgpu::SwapChainDescriptor,
-    swap_chain: wgpu::SwapChain,
 
     texture: wgpu::Texture,
     texture_view: wgpu::TextureView,
@@ -57,61 +52,16 @@ pub struct RenderContext {
 impl RenderContext {
     // TODO: `Option` -> `Result`.
     pub async fn create(window: &Window) -> Option<RenderContext> {
-        let size = window.inner_size();
-
-        let unsafe_extensions = wgpu::UnsafeFeatures::disallow();
-        let required_features = wgpu::Features::empty();
-
-        // Create the wgpu instance.
-        let instance = wgpu::Instance::new(wgpu::BackendBit::PRIMARY);
-
-        // Create the wgpu surface.
-        let surface = unsafe { instance.create_surface(window) };
-
-        // Create the wgpu adapter.
-        let adapter = instance
-            .request_adapter(
-                &wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: Some(&surface),
-                },
-                unsafe_extensions,
-            )
-            .await
-            .unwrap();
-
-        let adapter_features = adapter.features();
-
-        // Create the device handle and the command queue handle for that device.
-        let (device, queue) = adapter.request_device(&wgpu::DeviceDescriptor {
-            features: adapter_features & required_features,
-            limits: wgpu::Limits::default(),
-            shader_validation: true,
-        }, None)
-        .await
-        .unwrap();
+        let gpu_context = crate::gpu::GpuContext::create(window).await.unwrap();
 
         // Create the command encoder used during initialization.
-        let init_encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let init_encoder = gpu_context.create_command_encoder();
 
-        let world_geometry_manager = crate::world_geometry::WorldGeometryManager::new(&device)?;
+        let world_geometry_manager = crate::world_geometry::WorldGeometryManager::new(&gpu_context)?;
 
         // Load the vertex and fragment shaders.
-        let vs_module = device.create_shader_module(wgpu::include_spirv!("../../shaders/shader.vert.spv"));
-        let fs_module = device.create_shader_module(wgpu::include_spirv!("../../shaders/shader.frag.spv"));
-
-        // Create our swapchain. The swapchain is an abstraction over a buffered pixel array which corresponds directly
-        // to the image which is rendered onto the display.
-        let sc_desc = wgpu::SwapChainDescriptor {
-            usage: wgpu::TextureUsage::OUTPUT_ATTACHMENT,
-            format: wgpu::TextureFormat::Bgra8UnormSrgb,
-            width: size.width,
-            height: size.height,
-            present_mode: wgpu::PresentMode::Mailbox,
-        };
-
-        let swap_chain = device.create_swap_chain(&surface, &sc_desc);
+        let vs_module = gpu_context.create_shader_module_from_bytes(include_bytes!("../../shaders/shader.vert.spv"));
+        let fs_module = gpu_context.create_shader_module_from_bytes(include_bytes!("../../shaders/shader.frag.spv"));
 
         // Create our texture and write it into a GPU buffer. Right now the texture is just a white image, but the
         // infrastructure is already in place to make better use of this data.
@@ -122,7 +72,7 @@ impl RenderContext {
             height: size,
             depth: 1,
         };
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = gpu_context.create_texture(&wgpu::TextureDescriptor {
             size: texture_extent,
             mip_level_count: 1,
             sample_count: 1,
@@ -134,7 +84,7 @@ impl RenderContext {
         let texture_view = texture.create_default_view();
         // Place the texture data into a temporary copy buffer, and then immediately request a copy of it into a texture
         // buffer on the GPU. We wrap this in a lexical scope to avoid reusing `temp_buf`.
-        queue.write_texture(
+        gpu_context.queue().write_texture(
             wgpu::TextureCopyView {
                 texture: &texture,
                 mip_level: 0,
@@ -149,13 +99,14 @@ impl RenderContext {
             texture_extent,
         );
 
+        let (sc_width, sc_height) = gpu_context.size();
         // Create our depth buffer.
         let depth_buffer_size = wgpu::Extent3d {
-            width: sc_desc.width,
-            height: sc_desc.height,
+            width: sc_width,
+            height: sc_height,
             depth: 1,
         };
-        let depth_buffer = device.create_texture(&wgpu::TextureDescriptor {
+        let depth_buffer = gpu_context.create_texture(&wgpu::TextureDescriptor {
             size: depth_buffer_size,
             mip_level_count: 1,
             sample_count: 1,
@@ -167,7 +118,7 @@ impl RenderContext {
         let depth_buffer_view = depth_buffer.create_default_view();
 
         // Create the samplers.
-        let depth_buffer_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let depth_buffer_sampler = gpu_context.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -181,7 +132,7 @@ impl RenderContext {
             ..Default::default()
         });
 
-        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let texture_sampler = gpu_context.create_sampler(&wgpu::SamplerDescriptor {
             label: None,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -193,7 +144,7 @@ impl RenderContext {
         });
 
         // Create the camera and initialize it with sane defaults.
-        let aspect_ratio = sc_desc.width as f32 / sc_desc.height as f32;
+        let aspect_ratio = gpu_context.aspect_ratio();
         // This needs to be mutable because the camera has a matrix cache.
         // TODO: Can this be fixed? RefCell? Do we need an Arc? :(
         let mut camera = camera::Camera::new(
@@ -210,12 +161,12 @@ impl RenderContext {
 
         // Create the GPU buffer where we will store our shader uniforms.
         let uniform_buf = crate::managed_buffer::ManagedBuffer::new_uniform_buf_with_data(
-            &device,
+            &gpu_context,
             camera_matrix,
         ).ok()?;
 
         // Set up our bind groups; this binds our data to named locations which are referenced in the shaders.
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let bind_group_layout = gpu_context.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
             bindings: &[
                 // Our 0th bind group is for small global data shared between all invocations of the shader. Currently,
@@ -260,7 +211,7 @@ impl RenderContext {
             ],
         });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = gpu_context.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &bind_group_layout,
             bindings: &[
                 wgpu::Binding {
@@ -284,11 +235,11 @@ impl RenderContext {
         });
 
         // Set up our central render pipeline.
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let pipeline_layout = gpu_context.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             bind_group_layouts: &[&bind_group_layout],
         });
 
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let render_pipeline = gpu_context.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             layout: &pipeline_layout,
             vertex_stage: wgpu::ProgrammableStageDescriptor {
                 module: &vs_module,
@@ -365,22 +316,17 @@ impl RenderContext {
         });
 
         // Flush the initialization commands on the command queue.
-        queue.submit(Some(init_encoder.finish()));
+        gpu_context.queue().submit(Some(init_encoder.finish()));
 
         let next_frame_encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            gpu_context.create_command_encoder();
 
         Some(Self {
-            surface,
-            adapter,
-            device,
-            queue,
+            gpu_context,
             next_frame_encoder,
             world_geometry_manager,
             vs_module,
             fs_module,
-            sc_desc,
-            swap_chain,
             texture,
             texture_view,
             texture_sampler,
@@ -398,21 +344,15 @@ impl RenderContext {
     }
 
     pub fn resize(&mut self, size: winit::dpi::PhysicalSize<u32>) {
-        // Update our swap chain description with the new width and height and then create the new
-        // swap chain.
-        self.sc_desc.width = size.width;
-        self.sc_desc.height = size.height;
-        self.swap_chain = self.device.create_swap_chain(&self.surface, &self.sc_desc);
+        // Update our GPU context with the new width and height.
+        self.gpu_context.resize(size);
 
         // Our aspect ratio might have changed, so we update our camera.
-        self.camera.set_aspect_ratio(self.sc_desc.width as f32 / self.sc_desc.height as f32);
+        self.camera.set_aspect_ratio(self.gpu_context.aspect_ratio());
     }
 
     pub fn render(&mut self) {
-        let frame = match self.swap_chain.get_next_frame() {
-            Ok(frame) => frame,
-            Err(_) => panic!("Failed to acquire next swap chain texture!"),
-        };
+        let frame = self.gpu_context.get_next_frame().unwrap();
 
         // If the camera moved, we have to write the camera's data into the uniform buffer. We write
         // the data into the CPU side of our managed uniform buffer here.
@@ -423,23 +363,18 @@ impl RenderContext {
         // This looks weird, but picture the future: a loop over some collection of buffers,
         // potentially flushing each one.
         if self.world_geometry_manager.vertex_buf.dirty() {
-            self.world_geometry_manager.vertex_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
+            self.world_geometry_manager.vertex_buf.enqueue_copy_command(&self.gpu_context, &mut self.next_frame_encoder);
         }
         if self.world_geometry_manager.index_buf.dirty() {
-            self.world_geometry_manager.index_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
+            self.world_geometry_manager.index_buf.enqueue_copy_command(&self.gpu_context, &mut self.next_frame_encoder);
         }
         if self.uniform_buf.dirty() {
-            self.uniform_buf.enqueue_copy_command(&self.device, &mut self.next_frame_encoder);
+            self.uniform_buf.enqueue_copy_command(&self.gpu_context, &mut self.next_frame_encoder);
         }
 
-        // Go ahead and pull out the command encoder we have been using to build up this frame. We
-        // set up the next frame's encoder at the same time.
-        let mut next_frame_encoder =
-            self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        std::mem::swap(&mut self.next_frame_encoder, &mut next_frame_encoder);
 
         {
-            let mut render_pass = next_frame_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = self.next_frame_encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 color_attachments: &[wgpu::RenderPassColorAttachmentDescriptor {
                     attachment: &frame.output.view,
                     resolve_target: None,
@@ -479,7 +414,14 @@ impl RenderContext {
             }
         }
 
-        self.queue.submit(Some(next_frame_encoder.finish()));
+        // Pull out the command encoder we have been using to build up this frame. We set up the next frame's encoder
+        // at the same time.
+        let final_encoder = std::mem::replace(
+            &mut self.next_frame_encoder,
+            self.gpu_context.create_command_encoder(),
+        );
+
+        self.gpu_context.submit_command_encoder(final_encoder);
     }
 
     // Expose raw mutation for some of the basic state variables.

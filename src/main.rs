@@ -6,6 +6,7 @@ use winit::{
 };
 
 mod camera;
+mod gpu;
 mod input;
 mod managed_buffer;
 mod mesh;

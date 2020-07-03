@@ -48,10 +48,10 @@ impl<'cpu, Own: AsRef<[T]>, T: bytemuck::Pod + bytemuck::Zeroable> ManagedBuffer
     /// both the CPU and the GPU. This buffer is `COPY_DST`, so it can be written to. If the desired
     /// buffer is immutable, this is not the function to use.
     pub fn new_vertex_buf_with_data(
-        device: &wgpu::Device,
+        gpu_context: &crate::gpu::GpuContext,
         host_data: Own,
     ) -> Result<ManagedBuffer<T, Own>, ManagedBufferError> {
-        let raw = device.create_buffer_with_data(
+        let raw = gpu_context.create_buffer_with_data(
             bytemuck::cast_slice(host_data.as_ref()),
             wgpu::BufferUsage::VERTEX | wgpu::BufferUsage::COPY_DST,
         );
@@ -67,10 +67,10 @@ impl<'cpu, Own: AsRef<[T]>, T: bytemuck::Pod + bytemuck::Zeroable> ManagedBuffer
     /// both the CPU and the GPU. This buffer is `COPY_DST`, so it can be written to. If the desired
     /// buffer is immutable, this is not the function to use.
     pub fn new_index_buf_with_data(
-        device: &wgpu::Device,
+        gpu_context: &crate::gpu::GpuContext,
         host_data: Own,
     ) -> Result<ManagedBuffer<T, Own>, ManagedBufferError> {
-        let raw = device.create_buffer_with_data(
+        let raw = gpu_context.create_buffer_with_data(
             bytemuck::cast_slice(host_data.as_ref()),
             wgpu::BufferUsage::INDEX | wgpu::BufferUsage::COPY_DST,
         );
@@ -86,10 +86,10 @@ impl<'cpu, Own: AsRef<[T]>, T: bytemuck::Pod + bytemuck::Zeroable> ManagedBuffer
     /// both the CPU and the GPU. This buffer is `COPY_DST`, so it can be written to. If the desired
     /// buffer is immutable, this is not the function to use.
     pub fn new_uniform_buf_with_data(
-        device: &wgpu::Device,
+        gpu_context: &crate::gpu::GpuContext,
         host_data: Own,
     ) -> Result<ManagedBuffer<T, Own>, ManagedBufferError> {
-        let raw = device.create_buffer_with_data(
+        let raw = gpu_context.create_buffer_with_data(
             bytemuck::cast_slice(host_data.as_ref()),
             wgpu::BufferUsage::UNIFORM | wgpu::BufferUsage::COPY_DST,
         );
@@ -127,13 +127,16 @@ impl<'cpu, Own: AsRef<[T]>, T: bytemuck::Pod + bytemuck::Zeroable> ManagedBuffer
     ///
     /// Calling this function will reset the dirty flag. Be sure that you finish the command encoder
     /// and submit it on a queue.
+    // TODO: Should this functionality actually be provided by `wgpu::queue::write_buffer`, which
+    // may be able to avoid a memcpy?
     pub fn enqueue_copy_command(
-        &mut self, device: &wgpu::Device,
+        &mut self,
+        gpu_context: &crate::gpu::GpuContext,
         encoder: &mut wgpu::CommandEncoder,
     ) {
         if !self.dirty { return }
 
-        let stage_buffer = device.create_buffer_with_data(
+        let stage_buffer = gpu_context.create_buffer_with_data(
             bytemuck::cast_slice(self.host_data.as_ref()),
             wgpu::BufferUsage::COPY_SRC
         );
